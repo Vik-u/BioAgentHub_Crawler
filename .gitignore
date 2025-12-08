@@ -1,0 +1,13 @@
+# Byte-compiled / caches
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+
+# OS metadata
+.DS_Store
+
+# Generated crawl outputs
+crawler_outputs/
