@@ -1,18 +1,40 @@
 """bioRxiv search tool for literature mining."""
+import os
 import requests
-from typing import List, Dict
+from typing import List, Dict, Optional
 from datetime import datetime, timedelta
 
 
-def biorxiv_search_func(query: str, max_results: int = 50, anchor: str = None) -> List[Dict]:
+def _days_back_from_env(default_days: int = 730) -> int:
+    raw = os.getenv("BIORXIV_DAYS_BACK")
+    if not raw:
+        return default_days
+    try:
+        value = int(raw)
+        return max(1, value)
+    except ValueError:
+        return default_days
+
+
+def biorxiv_search_func(
+    query: str,
+    max_results: int = 50,
+    anchor: str = None,
+    days_back: Optional[int] = None,
+) -> List[Dict]:
     """
     Searches bioRxiv for preprints in BOTH title and abstract.
     Filters results to ensure anchor entity is present.
     """
     try:
+        try:
+            max_results = int(max_results)
+        except (TypeError, ValueError):
+            max_results = 50
         # bioRxiv API is date-based, so we search recent papers
         end_date = datetime.now()
-        start_date = end_date - timedelta(days=730)  # Last 2 years for better coverage
+        window_days = days_back if days_back is not None else _days_back_from_env()
+        start_date = end_date - timedelta(days=window_days)
         
         base_url = "https://api.biorxiv.org/details/biorxiv"
         url = f"{base_url}/{start_date.strftime('%Y-%m-%d')}/{end_date.strftime('%Y-%m-%d')}/0"
@@ -27,7 +49,7 @@ def biorxiv_search_func(query: str, max_results: int = 50, anchor: str = None) -
         query_lower = query.lower()
         # Remove boolean operators for term extraction
         query_clean = query_lower.replace(' and ', ' ').replace(' or ', ' ').replace('"', '')
-        query_terms = [t.strip() for t in query_clean.split() if len(t.strip()) > 3]
+        query_terms = [t.strip() for t in query_clean.split() if len(t.strip()) > 2]
         
         for paper in papers:
             title = paper.get('title', '').lower()
@@ -40,9 +62,9 @@ def biorxiv_search_func(query: str, max_results: int = 50, anchor: str = None) -
                 if anchor_lower not in combined:
                     continue
             
-            # Check if query terms match (at least 2 terms or 30% of terms)
+            # Check if query terms match (relaxed to avoid empty results)
             matches = sum(1 for term in query_terms if term in combined)
-            min_matches = max(2, len(query_terms) // 3)
+            min_matches = 0 if not query_terms else max(1, len(query_terms) // 3)
             
             if matches >= min_matches:
                 results.append({

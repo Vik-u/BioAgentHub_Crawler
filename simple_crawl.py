@@ -51,14 +51,22 @@ def run(query: str, max_results: int, anchor: str, download_count: int, out_dir:
     print(f"🔎 Searching Europe PMC and bioRxiv for: {query}")
     anchor_arg = anchor if anchor else None
 
+    source_stats = {"Europe PMC": 0, "bioRxiv": 0}
+    source_errors = {}
+
     def collect(source: str, papers: List[Dict]) -> List[Dict]:
         if not papers:
             print(f"   {source}: 0 hits")
+            source_stats[source] = 0
             return []
         if isinstance(papers, list) and papers and isinstance(papers[0], dict) and "error" in papers[0]:
-            print(f"   {source} error: {papers[0].get('error', 'unknown')}")
+            error_msg = papers[0].get("error", "unknown")
+            print(f"   {source} error: {error_msg}")
+            source_stats[source] = 0
+            source_errors[source] = error_msg
             return []
         print(f"   {source}: {len(papers)} hits")
+        source_stats[source] = len(papers)
         return papers
 
     results = []
@@ -86,7 +94,23 @@ def run(query: str, max_results: int, anchor: str, download_count: int, out_dir:
         json.dump(download_logs, f, indent=2)
     print(f"🧾 Saved download log to {log_path}")
 
-    return {"metadata": str(meta_path), "downloads": str(log_path), "count": len(deduped)}
+    download_succeeded = sum(1 for log in download_logs if (log or {}).get("status") == "success")
+    download_failed = len(download_logs) - download_succeeded
+
+    return {
+        "metadata": str(meta_path),
+        "downloads": str(log_path),
+        "count": len(deduped),
+        "stats": {
+            "sources": source_stats,
+            "source_errors": source_errors,
+            "total": len(results),
+            "deduped": len(deduped),
+            "download_attempted": len(download_logs),
+            "download_succeeded": download_succeeded,
+            "download_failed": download_failed,
+        },
+    }
 
 
 def main():

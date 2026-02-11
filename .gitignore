@@ -11,3 +11,20 @@ venv/
 
 # Generated crawl outputs
 crawler_outputs/
+agentic_outputs/
+bulk_outputs/
+demo_outputs/
+example_outputs/
+pand_outputs/
+agentic_demo/
+
+# Local configuration (contains user-specific settings/secrets)
+agentic_config.yaml
+.env
+
+# Logs
+*.log
+
+# Downloaded PDFs (keep sample output only)
+**/*.pdf
+!sample_outputs/sample.pdf

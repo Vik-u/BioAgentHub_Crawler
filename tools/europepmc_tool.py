@@ -9,6 +9,10 @@ def europepmc_search_func(query: str, max_results: int = 100, anchor: str = None
     Europe PMC has broader coverage than PubMed.
     """
     try:
+        try:
+            max_results = int(max_results)
+        except (TypeError, ValueError):
+            max_results = 100
         base_url = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
         params = {
             'query': query,
