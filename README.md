@@ -208,6 +208,7 @@ Parameters:
 - `--verbose` (flag): print per-epoch metrics.
 
 ## Environment variables
+- Copy `.env.example` to `.env` and fill in your values (do not commit `.env`).
 - `OPENAI_API_KEY`: required for agentic runs when `llm.provider=openai`.
 - `OPENAI_MODEL`: default OpenAI model for agents/cross-encoder (can be overridden by `--model` and config).
 - `OPENAI_EMBED_MODEL`: default embedding model for scoring.
