@@ -299,6 +299,18 @@ Known warnings:
 - Pydantic v2 deprecation warnings from CrewAI (class-based config, V1/V2 mixing). These are upstream and do not affect test pass/fail.
 - Gradio may warn about `python_multipart` import deprecation and `bottleneck` version; these are dependency warnings and do not affect test pass/fail.
 
-## Sample outputs
-`sample_outputs/sample.pdf` is a tiny, synthetic PDF included to demonstrate output shape.
-All real downloaded PDFs are ignored via `.gitignore`.
+## Example output (live run)
+Run:
+```bash
+bioagenthub-crawl --query "PETase depolymerase" --max 2 --download 1 --out crawler_outputs
+```
+Example metadata snippet from a real run (`papers.json`):
+```json
+{
+  "title": "Engineering of Synthetic Microbial Consortia for Sustainable Management of Wastewater and Polyethylene Terephthalate: A Comprehensive Review.",
+  "doi": "10.3390/ijms262311623",
+  "journal": "Int J Mol Sci",
+  "source": "Europe PMC"
+}
+```
+Downloaded PDFs are ignored via `.gitignore`.
