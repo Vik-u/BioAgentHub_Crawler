@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+from importlib import resources
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -162,6 +163,28 @@ def aggregate_relevance_stats(papers: List[Dict]) -> Dict:
     return summary
 
 
+def _parse_theta(data: object) -> Optional[List[float]]:
+    if isinstance(data, dict):
+        theta = data.get("theta") or data.get("weights")
+    else:
+        theta = data
+    if isinstance(theta, list) and len(theta) == 3:
+        return [float(x) for x in theta]
+    return None
+
+
+def _load_packaged_weights() -> Optional[List[float]]:
+    try:
+        resource = resources.files("bioagenthub_crawler").joinpath("scoring_weights.json")
+        if not resource.is_file():
+            return None
+        with resource.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        return _parse_theta(data)
+    except Exception:
+        return None
+
+
 def load_scoring_weights(path: Optional[str]) -> List[float]:
     candidate = Path(path) if path else DEFAULT_SCORING_WEIGHTS
     if candidate.exists():
@@ -170,12 +193,12 @@ def load_scoring_weights(path: Optional[str]) -> List[float]:
                 data = json.load(f)
         except Exception:
             data = {}
-        if isinstance(data, dict):
-            theta = data.get("theta") or data.get("weights")
-        else:
-            theta = data
-        if isinstance(theta, list) and len(theta) == 3:
-            return [float(x) for x in theta]
+        parsed = _parse_theta(data)
+        if parsed is not None:
+            return parsed
+    packaged = _load_packaged_weights()
+    if packaged is not None:
+        return packaged
     return [0.0, 0.0, 0.0]
 
 

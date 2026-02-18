@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bioagenthub-crawler"
+version = "0.1.0"
+description = "Lightweight literature crawler to fetch open-access papers for any topic."
+readme = "README.md"
+requires-python = ">=3.9"
+dynamic = ["dependencies"]
+keywords = ["literature", "crawler", "bioinformatics", "biorxiv", "europepmc"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+authors = [{ name = "Vikas Upadhyay", email = "viku@illinois.edu" }]
+
+[project.optional-dependencies]
+gradio = ["gradio"]
+dev = ["pytest", "pytest-cov"]
+
+[project.scripts]
+bioagenthub-crawl = "simple_crawl:main"
+bioagenthub-simple = "simple_crawl:main"
+bioagenthub-agentic = "agentic_crawl:main"
+bioagenthub-api = "api_server:main"
+bioagenthub-gradio = "gradio_crawler:main"
+bioagenthub-weights = "learn_weights:main"
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements-packaging.txt"] }
+
+[tool.setuptools]
+packages = ["bioagenthub_crawler", "tools"]
+py-modules = [
+  "agentic_crawl",
+  "api_server",
+  "gradio_crawler",
+  "learn_weights",
+  "metadata_enrichment",
+  "pdf_downloader",
+  "simple_crawl",
+]
+
+[tool.setuptools.package-data]
+bioagenthub_crawler = ["scoring_weights.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "integration: live integration tests that hit external services (skipped by default)",
+]

@@ -5,7 +5,6 @@ import argparse
 import json
 import os
 import re
-import sys
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -20,8 +19,6 @@ from pypdf import PdfReader
 import yaml
 
 ROOT = Path(__file__).resolve().parent
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
 
 from metadata_enrichment import (
     aggregate_relevance_stats,

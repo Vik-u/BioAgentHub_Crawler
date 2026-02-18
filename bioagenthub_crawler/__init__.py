@@ -1,0 +1,1 @@
+"""BioAgentHub Crawler packaged assets."""

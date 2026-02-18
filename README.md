@@ -11,15 +11,24 @@ Lightweight literature crawler to fetch open-access papers for any topic.
 cd /taiga/illinois/eng/chbe/zhao5/vikas/iBF/BioAgentHub_Crawler
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-pip install pytest
+pip install -e .
+pip install -e ".[dev]"
 ```
+If you prefer the old-style install:
+```bash
+pip install -r requirements.txt
+```
+Note: `requirements.txt` uses a local wheel for CrewAI. For packaging/editable installs, deps are read from `requirements-packaging.txt` (uses PyPI `crewai==0.5.0`).
 Optional (only if you want the Gradio UI):
 ```bash
-pip install gradio
+pip install -e ".[gradio]"
 ```
 
 ## Quickstart (simple CLI, no LLM)
+```bash
+bioagenthub-crawl --query "PETase depolymerase" --max 5 --download 1 --out crawler_outputs
+```
+Alternative (without console script):
 ```bash
 python simple_crawl.py --query "PETase depolymerase" --max 5 --download 1 --out crawler_outputs
 ```
@@ -42,6 +51,18 @@ Outputs are stored under `crawler_outputs/run_<timestamp>/`:
 - **Embeddings/cross-encoder:** require OpenAI access; disable via config if you do not want them.
 
 ### Example run
+```bash
+bioagenthub-agentic \
+  --brief "Find PETase engineering papers focused on thermostability and activity" \
+  --max-results 8 \
+  --downloads 2 \
+  --min-queries 4 \
+  --max-queries 10 \
+  --target-papers 12 \
+  --output agentic_outputs \
+  --config agentic_config.yaml
+```
+Alternative (without console script):
 ```bash
 python agentic_crawl.py \
   --brief "Find PETase engineering papers focused on thermostability and activity" \
@@ -99,9 +120,23 @@ Fields in the config file:
 - `scoring.embedding_model`: OpenAI embedding model name.
 - `scoring.cross_encoder_model`: OpenAI chat model name for relevance scoring.
 - `scoring.weights_path`: path to `scoring_weights.json` (softmax weights).
+  - If unset, a packaged default is used for installed builds. For custom weights, point this to your local file.
+
+## Console scripts
+Installed via `pip install -e .`:
+- `bioagenthub-crawl` (alias of `bioagenthub-simple`)
+- `bioagenthub-simple`
+- `bioagenthub-agentic`
+- `bioagenthub-api`
+- `bioagenthub-gradio`
+- `bioagenthub-weights`
 
 ## FastAPI server
 ### Start the API server
+```bash
+bioagenthub-api --host 0.0.0.0 --port 8005 --reload
+```
+Alternative (uvicorn directly):
 ```bash
 uvicorn api_server:app --host 0.0.0.0 --port 8005 --reload
 ```
@@ -165,6 +200,10 @@ These return JSON lines with events: `start`, `done`, or `error`.
 
 ## Gradio UI (optional)
 ```bash
+bioagenthub-gradio --host 0.0.0.0 --port 7862
+```
+Alternative (without console script):
+```bash
 python gradio_crawler.py --host 0.0.0.0 --port 7862
 ```
 CLI flags:
@@ -225,10 +264,40 @@ Then open:
 - ReDoc: `http://127.0.0.1:8005/redoc`
 - Gradio UI (if running): `http://127.0.0.1:7862/`
 
-## Tests
+## Testing
+Quick check:
 ```bash
 pytest -q
 ```
+Suggested protocol:
+```bash
+pip install -e ".[dev]"
+pytest
+pytest --cov=. --cov-report=term-missing
+```
+If you see pytest plugin import errors in a shared environment, rerun with:
+```bash
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q
+```
+Live integration tests (external network + OpenAI):
+```bash
+RUN_LIVE_INTEGRATION=1 pytest -m integration
+```
+Note: `OPENAI_API_KEY` must be set to run the agentic integration test.
+Manual checks:
+- `bioagenthub-crawl --query "test" --max 1 --download 0`
+- `bioagenthub-api --host 127.0.0.1 --port 8005` and open `http://127.0.0.1:8005/docs`
+- `bioagenthub-gradio --host 127.0.0.1 --port 7862` (optional)
+Capability smoke tests (no external calls):
+- `bioagenthub-crawl --help`
+- `bioagenthub-agentic --help`
+- `bioagenthub-api --help`
+- `bioagenthub-gradio --help`
+- `bioagenthub-weights --help`
+
+Known warnings:
+- Pydantic v2 deprecation warnings from CrewAI (class-based config, V1/V2 mixing). These are upstream and do not affect test pass/fail.
+- Gradio may warn about `python_multipart` import deprecation and `bottleneck` version; these are dependency warnings and do not affect test pass/fail.
 
 ## Sample outputs
 `sample_outputs/sample.pdf` is a tiny, synthetic PDF included to demonstrate output shape.

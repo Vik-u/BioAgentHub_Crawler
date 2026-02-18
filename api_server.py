@@ -2,6 +2,7 @@
 """FastAPI wrapper for BioAgentHub_Crawler."""
 from __future__ import annotations
 
+import argparse
 import json
 from argparse import Namespace
 from datetime import datetime
@@ -11,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
+import uvicorn
 
 from agentic_crawl import load_config, run_agentic_pipeline
 from simple_crawl import run as run_simple
@@ -504,3 +506,16 @@ def crawl_agentic_stream(payload: AgenticCrawlRequest) -> StreamingResponse:
             yield json.dumps({"event": "error", "message": str(exc)}) + "\n"
 
     return StreamingResponse(event_stream(), media_type="application/json")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="BioAgentHub Crawler FastAPI server.")
+    parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1).")
+    parser.add_argument("--port", type=int, default=8000, help="Bind port (default: 8000).")
+    parser.add_argument("--reload", action="store_true", help="Enable auto-reload (dev only).")
+    args = parser.parse_args()
+    uvicorn.run("api_server:app", host=args.host, port=args.port, reload=args.reload)
+
+
+if __name__ == "__main__":
+    main()
