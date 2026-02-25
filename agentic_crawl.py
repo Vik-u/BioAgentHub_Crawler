@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import re
+import time
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +21,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent
 
+from env_utils import load_env
 from metadata_enrichment import (
     aggregate_relevance_stats,
     apply_hybrid_relevance_scoring,
@@ -29,6 +31,11 @@ from metadata_enrichment import (
 from pdf_downloader import ImprovedPDFDownloader
 from simple_crawl import deduplicate
 from tools import biorxiv_search_func, europepmc_search_func
+from zotero_sync import get_collection_info, sync_papers_to_zotero, zotero_configured
+from usage_tracker import UsageTracker
+
+
+load_env()
 
 STOPWORDS = {
     "a",
@@ -379,7 +386,7 @@ def agent_temperature(config: Dict[str, Any], agent_key: str, default: float) ->
     )
 
 
-def make_llm_builder(config: Dict[str, Any], default_model: Optional[str]):
+def make_llm_builder(config: Dict[str, Any], default_model: Optional[str], tracker: Optional[UsageTracker] = None):
     llm_cfg = config.get("llm", {})
     provider = (llm_cfg.get("provider") or "openai").lower()
 
@@ -395,6 +402,8 @@ def make_llm_builder(config: Dict[str, Any], default_model: Optional[str]):
     model_name = llm_cfg.get("model") or default_model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
     def builder(temp: float):
+        if tracker:
+            return ChatOpenAI(model=model_name, temperature=temp, callbacks=[tracker])
         return ChatOpenAI(model=model_name, temperature=temp)
 
     return builder, "openai"
@@ -631,7 +640,9 @@ def build_agent(
 
 
 def run_agentic_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> Dict[str, Any]:
-    llm_builder, provider = make_llm_builder(config, args.model)
+    start_time = time.perf_counter()
+    usage_tracker = UsageTracker()
+    llm_builder, provider = make_llm_builder(config, args.model, tracker=usage_tracker)
     if provider == "openai":
         _ensure_api_key()
 
@@ -644,6 +655,24 @@ def run_agentic_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> Di
     scoring_config = config.get("scoring", {})
     scoring_payload = json.dumps(scoring_config)
     brief_literal = json.dumps(args.brief)
+
+    gatekeeper = None
+    if zotero_configured() and args.gatekeeper != "off":
+        gatekeeper = get_collection_info(args.brief, args.zotero_collection)
+        if gatekeeper and gatekeeper.get("exists") and args.gatekeeper == "skip" and gatekeeper.get("num_items", 0) > 0:
+            outputs = {
+                "skipped": True,
+                "reason": "collection_exists",
+                "gatekeeper": gatekeeper,
+                "run_dir": str(run_dir),
+                "usage": usage_tracker.summary(),
+                "stats": {"runtime_sec": round(time.perf_counter() - start_time, 2)},
+            }
+            summary_path = run_dir / "agentic_summary.json"
+            with open(summary_path, "w") as f:
+                json.dump(outputs, f, indent=2)
+            outputs["summary_path"] = str(summary_path)
+            return outputs
 
     query_agent = build_agent(
         role="Query Expansion Specialist",
@@ -865,6 +894,29 @@ def run_agentic_pipeline(args: argparse.Namespace, config: Dict[str, Any]) -> Di
         "run_dir": str(run_dir),
     }
 
+    zotero_result = None
+    if zotero_configured() and not args.no_zotero:
+        try:
+            papers = json.loads(metadata_path.read_text())
+        except Exception:
+            papers = []
+        download_log = outputs.get("downloads", {}).get("log_path")
+        download_log_path = Path(download_log) if download_log else download_dir / "download_log.json"
+        zotero_result = sync_papers_to_zotero(
+            papers,
+            topic=args.brief,
+            download_log_path=download_log_path,
+            pdf_dir=download_dir,
+            collection_override=args.zotero_collection,
+            attach_pdfs=args.with_pdf,
+            dedupe_local=not args.no_zotero_local_dedupe,
+            dedupe_remote=not args.no_zotero_remote_dedupe,
+        )
+
+    outputs["usage"] = usage_tracker.summary()
+    outputs["stats"] = {"runtime_sec": round(time.perf_counter() - start_time, 2)}
+    outputs["zotero"] = zotero_result
+
     summary_path = run_dir / "agentic_summary.json"
     with open(summary_path, "w") as f:
         json.dump(outputs, f, indent=2)
@@ -887,6 +939,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", default="agentic_outputs", help="Directory for agent outputs.")
     parser.add_argument("--config", default="agentic_config.yaml", help="Path to YAML config file (optional).")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose CrewAI logs.")
+    parser.add_argument("--zotero-collection", type=str, default=None, help="Override Zotero collection name.")
+    parser.add_argument("--no-zotero", action="store_true", help="Disable Zotero sync for this run.")
+    parser.add_argument("--with-pdf", action="store_true", help="Attach PDFs to Zotero when available.")
+    parser.add_argument("--no-zotero-local-dedupe", action="store_true", help="Disable local dedupe/cache.")
+    parser.add_argument("--no-zotero-remote-dedupe", action="store_true", help="Disable Zotero remote dedupe.")
+    parser.add_argument(
+        "--gatekeeper",
+        choices=["skip", "refresh", "off"],
+        default="skip",
+        help="Zotero gatekeeper mode: skip if collection exists, refresh (crawl anyway), or off.",
+    )
     return parser
 
 

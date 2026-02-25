@@ -24,12 +24,13 @@ gradio = ["gradio"]
 dev = ["pytest", "pytest-cov"]
 
 [project.scripts]
-bioagenthub-crawl = "simple_crawl:main"
+bioagenthub-crawl = "crawl_runner:main"
 bioagenthub-simple = "simple_crawl:main"
 bioagenthub-agentic = "agentic_crawl:main"
 bioagenthub-api = "api_server:main"
 bioagenthub-gradio = "gradio_crawler:main"
 bioagenthub-weights = "learn_weights:main"
+bioagenthub-zotero = "zotero_cli:main"
 
 [tool.setuptools.dynamic]
 dependencies = { file = ["requirements-packaging.txt"] }
@@ -39,11 +40,19 @@ packages = ["bioagenthub_crawler", "tools"]
 py-modules = [
   "agentic_crawl",
   "api_server",
+  "crawl_runner",
+  "env_utils",
   "gradio_crawler",
   "learn_weights",
   "metadata_enrichment",
   "pdf_downloader",
+  "postprocess",
   "simple_crawl",
+  "usage_tracker",
+  "zotero_cli",
+  "zotero_library",
+  "zotero_sync",
+  "postprocess",
 ]
 
 [tool.setuptools.package-data]

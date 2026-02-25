@@ -24,11 +24,20 @@ Optional (only if you want the Gradio UI):
 pip install -e ".[gradio]"
 ```
 
-## Quickstart (simple CLI, no LLM)
+## Quickstart (agentic by default)
 ```bash
-bioagenthub-crawl --query "PETase depolymerase" --max 5 --download 1 --out crawler_outputs
+bioagenthub-crawl \
+  --brief "Find PETase engineering papers focused on thermostability and activity" \
+  --max-results 10 \
+  --downloads 0 \
+  --output agentic_outputs \
+  --config agentic_config.yaml
 ```
-Alternative (without console script):
+Simple mode (no LLM):
+```bash
+bioagenthub-crawl --mode simple --query "PETase depolymerase" --max 5 --download 1 --out crawler_outputs
+```
+Alternative (without console script, simple mode):
 ```bash
 python simple_crawl.py --query "PETase depolymerase" --max 5 --download 1 --out crawler_outputs
 ```
@@ -43,6 +52,12 @@ Outputs are stored under `crawler_outputs/run_<timestamp>/`:
 - `--max` (default: 10): max results per source (Europe PMC + bioRxiv).
 - `--download` (default: 1): how many PDFs to attempt.
 - `--out` (default: `crawler_outputs`): output root; a `run_<timestamp>` folder is created.
+- `--zotero-collection` (optional): override the Zotero collection name.
+- `--no-zotero` (flag): disable Zotero sync for this run.
+- `--with-pdf` (flag): attach PDFs to Zotero when available (default metadata-only).
+- `--no-zotero-local-dedupe` (flag): disable local dedupe/cache.
+- `--no-zotero-remote-dedupe` (flag): disable Zotero remote dedupe.
+- `--gatekeeper` (default: `skip`): `skip`, `refresh`, or `off` for pre-crawl Zotero checks.
 
 ## Agentic crawler (CrewAI workflow)
 ### Requirements
@@ -89,6 +104,12 @@ python agentic_crawl.py \
 - `--output` (default: `agentic_outputs`): output root; a `agentic_run_<timestamp>` folder is created.
 - `--config` (default: `agentic_config.yaml`): YAML config path; if missing, defaults are used.
 - `--verbose` (flag): enable verbose CrewAI logs.
+- `--zotero-collection` (optional): override the Zotero collection name.
+- `--no-zotero` (flag): disable Zotero sync for this run.
+- `--with-pdf` (flag): attach PDFs to Zotero when available (default metadata-only).
+- `--no-zotero-local-dedupe` (flag): disable local dedupe/cache.
+- `--no-zotero-remote-dedupe` (flag): disable Zotero remote dedupe.
+- `--gatekeeper` (default: `skip`): `skip`, `refresh`, or `off` for pre-crawl Zotero checks.
 
 ### Agentic outputs
 Each run creates:
@@ -96,7 +117,7 @@ Each run creates:
 agentic_outputs/
   agentic_run_<timestamp>/
     papers_agentic.json     # deduped metadata + scores
-    agentic_summary.json    # full agent outputs + diagnostics
+    agentic_summary.json    # full agent outputs + diagnostics + usage + zotero
     pdfs/
       download_log.json
       0001_<pmid>_<title>.pdf
@@ -124,12 +145,13 @@ Fields in the config file:
 
 ## Console scripts
 Installed via `pip install -e .`:
-- `bioagenthub-crawl` (alias of `bioagenthub-simple`)
+- `bioagenthub-crawl` (defaults to agentic; add `--mode simple` to use the simple crawler)
 - `bioagenthub-simple`
 - `bioagenthub-agentic`
 - `bioagenthub-api`
 - `bioagenthub-gradio`
 - `bioagenthub-weights`
+- `bioagenthub-zotero`
 
 ## FastAPI server
 ### Start the API server
@@ -247,11 +269,109 @@ Parameters:
 - `--verbose` (flag): print per-epoch metrics.
 
 ## Environment variables
+**Zotero API key is required** to sync papers to a library.
 - Copy `.env.example` to `.env` and fill in your values (do not commit `.env`).
 - `OPENAI_API_KEY`: required for agentic runs when `llm.provider=openai`.
 - `OPENAI_MODEL`: default OpenAI model for agents/cross-encoder (can be overridden by `--model` and config).
 - `OPENAI_EMBED_MODEL`: default embedding model for scoring.
 - `BIORXIV_DAYS_BACK`: lookback window (days) for bioRxiv searches; default 730.
+- `ZOTERO_API_KEY`: API key with write access to your Zotero library.
+- `ZOTERO_LIBRARY_TYPE`: `group` or `user` (default `group`).
+- `ZOTERO_GROUP_ID`: group library ID (required if library type is `group`). Default in this repo: `6443780` (`ibiofoundry-ai_petase`).
+- `ZOTERO_GROUP_ID_SECONDARY`: optional secondary group ID to sync to both libraries (default in this repo: `6443907`).
+- `ZOTERO_USER_ID`: user library ID (required if library type is `user`).
+- `ZOTERO_COLLECTION_PREFIX`: prefix used when creating collections (default empty string; no prefix).
+- `ZOTERO_CACHE_DIR`: local cache directory for dedupe across runs (default `.zotero_cache`).
+
+## Zotero integration
+Zotero does not allow creating new libraries via API. Instead, this repo creates a collection per topic or project inside your group library. This keeps all papers organized under one group while still separating projects.
+
+**Users must provide their own Zotero API key** (and set the group or user library IDs) to enable sync.
+
+Default behavior is metadata-only sync. PDFs are attached only when you enable `--with-pdf` and downloads exist.
+
+```mermaid
+flowchart TD
+  A[Simple crawler] --> B[papers.json]
+  C[Agentic crawler] --> D[papers_agentic.json]
+  B --> E[Zotero sync]
+  D --> E
+  E --> F[Collection per topic]
+  E --> G[Optional PDF attachments]
+```
+
+### Zotero sync behavior
+- Collection name: `<topic>` by default (prefix optional via `ZOTERO_COLLECTION_PREFIX` or `--zotero-collection`).
+- PETase runs are normalized to **collection name `PETase`** to avoid duplicate collections.
+- Dedupe: local cache plus optional remote lookups by DOI/PMID/title.
+- Local cache: stored in `ZOTERO_CACHE_DIR` to avoid re-adding items across runs.
+- Gatekeeper: pre-crawl check can skip runs if the query contains an existing collection name. Use `--gatekeeper refresh` to always crawl.
+
+### Zotero CLI
+`bioagenthub-zotero` subcommands:
+- `health`: check Zotero connectivity.
+- `collections`: list collections.
+- `items`: list items in a collection or library.
+- `search`: search items by query.
+- `get`: fetch a single item by key.
+- `sync`: push a metadata JSON file into a collection.
+- `dedupe`: merge and dedupe multiple metadata JSON files.
+
+Example:
+```bash
+bioagenthub-zotero sync \
+  --metadata crawler_outputs/run_20250225_120000/papers.json \
+  --topic "PETase project" \
+  --with-pdf
+```
+
+### Zotero API endpoints
+- `GET /zotero/health`
+- `GET /zotero/collections`
+- `GET /zotero/items?collection_key=<key>&limit=<n>&start=<n>`
+- `GET /zotero/item/<item_key>`
+- `GET /zotero/search?query=<q>&collection_key=<key>`
+- `POST /zotero/sync`
+- `POST /zotero/dedupe`
+
+`POST /zotero/sync` JSON:
+- `metadata_path` (required): path to metadata JSON list.
+- `topic` (required): project/topic name.
+- `download_log_path` (optional): PDF download log.
+- `pdf_dir` (optional): directory for PDFs.
+- `collection_override` (optional): override collection name.
+- `with_pdf` (optional): attach PDFs when available.
+- `no_dedupe_local` (optional): disable local cache dedupe.
+- `no_dedupe_remote` (optional): disable remote dedupe.
+
+### Post-processing and multi-run dedupe
+Use `bioagenthub-zotero dedupe` (or `POST /zotero/dedupe`) to merge multiple metadata files across runs and remove redundancy before syncing.
+
+## Usage tracking
+Agentic runs now emit:
+- `usage`: best-effort token usage (if available from the LLM provider).
+- `stats.runtime_sec`: end-to-end runtime for the run.
+
+## New modules
+- `zotero_sync.py`: core sync logic, collection management, optional PDF attachments, and dedupe cache.
+- `zotero_library.py`: read/write helpers for collections, items, and searches.
+- `zotero_cli.py`: CLI wrapper for health, search, sync, and dedupe.
+- `postprocess.py`: merge and dedupe multiple metadata files across runs.
+- `usage_tracker.py`: LLM usage tracking for agentic runs.
+- `crawl_runner.py`: unified entrypoint that defaults to agentic; use `--mode simple` to switch.
+
+## Simple vs agentic comparison
+Use this as a high-level comparison when deciding which mode to run:
+
+| Dimension | Simple crawler | Agentic crawler |
+| --- | --- | --- |
+| Speed | Fast (single pass queries) | Slower (multi-agent + reranking) |
+| Compute | Low | High (LLM + optional embeddings) |
+| Cost | Low | Higher (LLM calls) |
+| Quality | Good for broad OA recall | Better precision and ranking |
+| Best use | Quick sweeps, OA-only | Curated, high-quality runs |
+
+For actual numbers, compare the `stats.runtime_sec` and `usage` outputs across your runs.
 
 ## SSH port forwarding (cluster usage)
 If running on a cluster node, forward ports to your laptop:
@@ -285,7 +405,7 @@ RUN_LIVE_INTEGRATION=1 pytest -m integration
 ```
 Note: `OPENAI_API_KEY` must be set to run the agentic integration test.
 Manual checks:
-- `bioagenthub-crawl --query "test" --max 1 --download 0`
+- `bioagenthub-crawl --mode simple --query "test" --max 1 --download 0`
 - `bioagenthub-api --host 127.0.0.1 --port 8005` and open `http://127.0.0.1:8005/docs`
 - `bioagenthub-gradio --host 127.0.0.1 --port 7862` (optional)
 Capability smoke tests (no external calls):
@@ -302,7 +422,7 @@ Known warnings:
 ## Sample outputs (real run)
 The `sample_outputs/` folder contains real output from a live run:
 ```bash
-bioagenthub-crawl --query "PETase depolymerase" --max 2 --download 1 --out crawler_outputs
+bioagenthub-crawl --mode simple --query "PETase depolymerase" --max 2 --download 1 --out crawler_outputs
 ```
 Included files:
 - `sample_outputs/papers.json` (real metadata)

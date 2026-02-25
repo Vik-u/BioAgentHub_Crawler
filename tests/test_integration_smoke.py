@@ -84,3 +84,14 @@ scoring:
         timeout=600,
     )
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.integration
+def test_zotero_health_live():
+    _require_live()
+    if not os.getenv("ZOTERO_API_KEY"):
+        pytest.skip("ZOTERO_API_KEY not set")
+    if not (os.getenv("ZOTERO_GROUP_ID") or os.getenv("ZOTERO_USER_ID")):
+        pytest.skip("ZOTERO_GROUP_ID or ZOTERO_USER_ID not set")
+    result = _run([sys.executable, str(ROOT / "zotero_cli.py"), "health"], timeout=120)
+    assert result.returncode == 0, result.stderr

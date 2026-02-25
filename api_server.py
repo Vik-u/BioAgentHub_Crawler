@@ -16,6 +16,17 @@ import uvicorn
 
 from agentic_crawl import load_config, run_agentic_pipeline
 from simple_crawl import run as run_simple
+from postprocess import merge_and_dedupe
+from zotero_library import (
+    get_item as zotero_get_item,
+    health_check as zotero_health_check,
+    list_collections as zotero_list_collections,
+    list_items as zotero_list_items,
+    rename_collection as zotero_rename_collection,
+    rename_collection_by_name as zotero_rename_collection_by_name,
+    search_items as zotero_search_items,
+    sync_from_metadata as zotero_sync_from_metadata,
+)
 
 app = FastAPI(title="BioAgentHub Crawler API", version="0.1.0")
 
@@ -27,6 +38,12 @@ class SimpleCrawlRequest(BaseModel):
     download_count: int = Field(1, ge=0, le=500, description="How many PDFs to attempt downloading.")
     output_root: str = Field("crawler_outputs", description="Base output directory.")
     run_name: Optional[str] = Field(None, description="Optional run folder name; defaults to timestamp.")
+    zotero_collection: Optional[str] = Field(None, description="Override Zotero collection name.")
+    no_zotero: bool = Field(False, description="Disable Zotero sync for this run.")
+    with_pdf: bool = Field(False, description="Attach PDFs to Zotero when available.")
+    no_zotero_local_dedupe: bool = Field(False, description="Disable local Zotero dedupe/cache.")
+    no_zotero_remote_dedupe: bool = Field(False, description="Disable Zotero remote dedupe.")
+    gatekeeper_mode: str = Field("skip", description="Zotero gatekeeper mode: skip, refresh, off.")
 
 
 class AgenticCrawlRequest(BaseModel):
@@ -43,6 +60,12 @@ class AgenticCrawlRequest(BaseModel):
     output_root: str = Field("agentic_outputs", description="Base output directory.")
     config_path: str = Field("agentic_config.yaml", description="Agentic config file path.")
     verbose: bool = Field(False, description="Enable verbose CrewAI logs.")
+    zotero_collection: Optional[str] = Field(None, description="Override Zotero collection name.")
+    no_zotero: bool = Field(False, description="Disable Zotero sync for this run.")
+    with_pdf: bool = Field(False, description="Attach PDFs to Zotero when available.")
+    no_zotero_local_dedupe: bool = Field(False, description="Disable local Zotero dedupe/cache.")
+    no_zotero_remote_dedupe: bool = Field(False, description="Disable Zotero remote dedupe.")
+    gatekeeper_mode: str = Field("skip", description="Zotero gatekeeper mode: skip, refresh, off.")
 
 
 class TablePreview(BaseModel):
@@ -60,6 +83,28 @@ class AgenticCrawlResponse(BaseModel):
     run_dir: str
     result: dict
     table: Optional[TablePreview] = None
+
+
+class ZoteroSyncRequest(BaseModel):
+    metadata_path: str = Field(..., description="Path to metadata JSON (list of papers).")
+    topic: str = Field(..., description="Topic or project name for collection.")
+    download_log_path: Optional[str] = Field(None, description="Path to download_log.json")
+    pdf_dir: Optional[str] = Field(None, description="Directory with PDFs.")
+    collection_override: Optional[str] = Field(None, description="Override collection name.")
+    with_pdf: bool = Field(False, description="Attach PDFs when available.")
+    no_dedupe_local: bool = Field(False, description="Disable local Zotero dedupe/cache.")
+    no_dedupe_remote: bool = Field(False, description="Disable Zotero remote dedupe.")
+
+
+class ZoteroDedupeRequest(BaseModel):
+    metadata_paths: List[str] = Field(..., description="Metadata JSON paths.")
+    output_path: str = Field(..., description="Output path for merged deduped JSON.")
+
+
+class ZoteroRenameRequest(BaseModel):
+    collection_key: Optional[str] = Field(None, description="Collection key to rename.")
+    old_name: Optional[str] = Field(None, description="Existing collection name (if no key).")
+    new_name: str = Field(..., description="New collection name.")
 
 
 def _make_run_dir(output_root: str, run_name: Optional[str]) -> Path:
@@ -428,6 +473,12 @@ def crawl_simple(payload: SimpleCrawlRequest) -> SimpleCrawlResponse:
             anchor=payload.anchor,
             download_count=payload.download_count,
             out_dir=run_dir,
+            zotero_collection=payload.zotero_collection,
+            disable_zotero=payload.no_zotero,
+            attach_pdfs=payload.with_pdf,
+            dedupe_local=not payload.no_zotero_local_dedupe,
+            dedupe_remote=not payload.no_zotero_remote_dedupe,
+            gatekeeper_mode=payload.gatekeeper_mode,
         )
         table = _build_table(_load_metadata(result.get("metadata")))
         return SimpleCrawlResponse(run_dir=str(run_dir), result=result, table=table)
@@ -450,6 +501,12 @@ def _build_agentic_args(payload: AgenticCrawlRequest) -> Namespace:
         output=payload.output_root,
         config=payload.config_path,
         verbose=payload.verbose,
+        zotero_collection=payload.zotero_collection,
+        no_zotero=payload.no_zotero,
+        with_pdf=payload.with_pdf,
+        no_zotero_local_dedupe=payload.no_zotero_local_dedupe,
+        no_zotero_remote_dedupe=payload.no_zotero_remote_dedupe,
+        gatekeeper=payload.gatekeeper_mode,
     )
 
 
@@ -478,6 +535,11 @@ def crawl_simple_stream(payload: SimpleCrawlRequest) -> StreamingResponse:
                 anchor=payload.anchor,
                 download_count=payload.download_count,
                 out_dir=run_dir,
+                zotero_collection=payload.zotero_collection,
+                disable_zotero=payload.no_zotero,
+                attach_pdfs=payload.with_pdf,
+                dedupe_local=not payload.no_zotero_local_dedupe,
+                dedupe_remote=not payload.no_zotero_remote_dedupe,
             )
             table = _build_table(_load_metadata(result.get("metadata")))
             yield json.dumps(
@@ -506,6 +568,85 @@ def crawl_agentic_stream(payload: AgenticCrawlRequest) -> StreamingResponse:
             yield json.dumps({"event": "error", "message": str(exc)}) + "\n"
 
     return StreamingResponse(event_stream(), media_type="application/json")
+
+
+@app.get("/zotero/health")
+def zotero_health() -> dict:
+    try:
+        return zotero_health_check()
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/zotero/collections")
+def zotero_collections() -> list:
+    try:
+        return zotero_list_collections()
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/zotero/items")
+def zotero_items(collection_key: Optional[str] = None, limit: int = 50, start: int = 0) -> list:
+    try:
+        return zotero_list_items(collection_key=collection_key, limit=limit, start=start)
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/zotero/item/{item_key}")
+def zotero_item(item_key: str) -> dict:
+    try:
+        return zotero_get_item(item_key)
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/zotero/search")
+def zotero_search(query: str, collection_key: Optional[str] = None, limit: int = 20) -> list:
+    try:
+        return zotero_search_items(query=query, collection_key=collection_key, limit=limit)
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/zotero/sync")
+def zotero_sync(payload: ZoteroSyncRequest) -> dict:
+    try:
+        result = zotero_sync_from_metadata(
+            metadata_path=Path(payload.metadata_path),
+            topic=payload.topic,
+            download_log_path=Path(payload.download_log_path) if payload.download_log_path else None,
+            pdf_dir=Path(payload.pdf_dir) if payload.pdf_dir else None,
+            collection_override=payload.collection_override,
+            attach_pdfs=payload.with_pdf,
+            dedupe_local=not payload.no_dedupe_local,
+            dedupe_remote=not payload.no_dedupe_remote,
+        )
+        return result
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/zotero/dedupe")
+def zotero_dedupe(payload: ZoteroDedupeRequest) -> dict:
+    try:
+        paths = [Path(p) for p in payload.metadata_paths]
+        return merge_and_dedupe(paths, Path(payload.output_path))
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/zotero/rename")
+def zotero_rename(payload: ZoteroRenameRequest) -> dict:
+    try:
+        if payload.collection_key:
+            return zotero_rename_collection(payload.collection_key, payload.new_name)
+        if not payload.old_name:
+            raise HTTPException(status_code=400, detail="old_name is required if collection_key is not provided.")
+        return zotero_rename_collection_by_name(payload.old_name, payload.new_name)
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 def main() -> None:

@@ -18,6 +18,7 @@ demo_outputs/
 example_outputs/
 pand_outputs/
 agentic_demo/
+analysis_outputs/
 
 # Local configuration (contains user-specific settings/secrets)
 agentic_config.yaml
@@ -28,3 +29,6 @@ agentic_config.yaml
 
 # Downloaded PDFs
 **/*.pdf
+
+# Zotero cache
+.zotero_cache/

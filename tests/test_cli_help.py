@@ -43,3 +43,8 @@ def test_gradio_help():
         pytest.skip("gradio not installed")
     result = _run_help("gradio_crawler.py")
     assert result.returncode == 0, result.stderr
+
+
+def test_zotero_cli_help():
+    result = _run_help("zotero_cli.py")
+    assert result.returncode == 0, result.stderr

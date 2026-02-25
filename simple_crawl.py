@@ -11,11 +11,17 @@ Example:
 """
 import argparse
 import json
+import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from tools import biorxiv_search_func, europepmc_search_func
+from env_utils import load_env
+from zotero_sync import get_collection_info, sync_papers_to_zotero, zotero_configured
+
+
+load_env()
 from pdf_downloader import ImprovedPDFDownloader
 
 
@@ -46,8 +52,36 @@ def deduplicate(papers: List[Dict]) -> List[Dict]:
     return unique
 
 
-def run(query: str, max_results: int, anchor: str, download_count: int, out_dir: Path) -> Dict:
+def run(
+    query: str,
+    max_results: int,
+    anchor: str,
+    download_count: int,
+    out_dir: Path,
+    zotero_collection: Optional[str] = None,
+    disable_zotero: bool = False,
+    attach_pdfs: bool = False,
+    dedupe_local: bool = True,
+    dedupe_remote: bool = True,
+    gatekeeper_mode: str = "skip",
+) -> Dict:
+    start_time = time.perf_counter()
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    gatekeeper = None
+    if zotero_configured() and gatekeeper_mode != "off":
+        gatekeeper = get_collection_info(query, zotero_collection)
+        if gatekeeper and gatekeeper.get("exists") and gatekeeper_mode == "skip" and gatekeeper.get("num_items", 0) > 0:
+            runtime_sec = round(time.perf_counter() - start_time, 2)
+            return {
+                "metadata": None,
+                "downloads": None,
+                "count": 0,
+                "skipped": True,
+                "reason": "collection_exists",
+                "zotero": {"gatekeeper": gatekeeper},
+                "stats": {"runtime_sec": runtime_sec},
+            }
     print(f"🔎 Searching Europe PMC and bioRxiv for: {query}")
     anchor_arg = anchor if anchor else None
 
@@ -97,10 +131,25 @@ def run(query: str, max_results: int, anchor: str, download_count: int, out_dir:
     download_succeeded = sum(1 for log in download_logs if (log or {}).get("status") == "success")
     download_failed = len(download_logs) - download_succeeded
 
+    zotero_result = None
+    if zotero_configured() and not disable_zotero:
+        zotero_result = sync_papers_to_zotero(
+            deduped,
+            topic=query,
+            download_log_path=log_path,
+            pdf_dir=out_dir,
+            collection_override=zotero_collection,
+            attach_pdfs=attach_pdfs,
+            dedupe_local=dedupe_local,
+            dedupe_remote=dedupe_remote,
+        )
+
+    runtime_sec = round(time.perf_counter() - start_time, 2)
     return {
         "metadata": str(meta_path),
         "downloads": str(log_path),
         "count": len(deduped),
+        "zotero": zotero_result,
         "stats": {
             "sources": source_stats,
             "source_errors": source_errors,
@@ -109,6 +158,7 @@ def run(query: str, max_results: int, anchor: str, download_count: int, out_dir:
             "download_attempted": len(download_logs),
             "download_succeeded": download_succeeded,
             "download_failed": download_failed,
+            "runtime_sec": runtime_sec,
         },
     }
 
@@ -120,11 +170,34 @@ def main():
     parser.add_argument("--max", type=int, default=10, help="Max results per source.")
     parser.add_argument("--download", type=int, default=1, help="How many papers to attempt downloading.")
     parser.add_argument("--out", type=str, default="crawler_outputs", help="Output directory for results.")
+    parser.add_argument("--zotero-collection", type=str, default=None, help="Override Zotero collection name.")
+    parser.add_argument("--no-zotero", action="store_true", help="Disable Zotero sync for this run.")
+    parser.add_argument("--with-pdf", action="store_true", help="Attach PDFs to Zotero when available.")
+    parser.add_argument("--no-zotero-local-dedupe", action="store_true", help="Disable local dedupe/cache.")
+    parser.add_argument("--no-zotero-remote-dedupe", action="store_true", help="Disable Zotero remote dedupe.")
+    parser.add_argument(
+        "--gatekeeper",
+        choices=["skip", "refresh", "off"],
+        default="skip",
+        help="Zotero gatekeeper mode: skip if collection exists, refresh (crawl anyway), or off.",
+    )
     args = parser.parse_args()
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = Path(args.out) / f"run_{timestamp}"
-    run(args.query, args.max, args.anchor, args.download, out_dir)
+    run(
+        args.query,
+        args.max,
+        args.anchor,
+        args.download,
+        out_dir,
+        zotero_collection=args.zotero_collection,
+        disable_zotero=args.no_zotero,
+        attach_pdfs=args.with_pdf,
+        dedupe_local=not args.no_zotero_local_dedupe,
+        dedupe_remote=not args.no_zotero_remote_dedupe,
+        gatekeeper_mode=args.gatekeeper,
+    )
 
 
 if __name__ == "__main__":
